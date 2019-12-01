@@ -5,28 +5,26 @@ import itertools
 import sys
 import matplotlib
 import matplotlib.style
-import pandas as pd
 from gym_super_mario_bros.actions import COMPLEX_MOVEMENT
 from collections import defaultdict
-import plotting
-import re
-matplotlib.style.use('ggplot')
 
 env = gym_super_mario_bros.make('SuperMarioBros-1-1-v0')
 env = JoypadSpace(env, COMPLEX_MOVEMENT)
 
+#Standard Greedy Epsilon Policy
 def greedyEpsilon(Q, epsilon, num_actions):
     def policyFunction(state):
-        Action_probabilities = np.ones(num_actions,dtype = float) * epsilon / num_actions
+        actionChance = np.ones(num_actions,dtype = float) * epsilon / num_actions
         best_action = np.argmax(Q[state])
-        Action_probabilities[best_action] += (1.0 - epsilon)
-        return Action_probabilities
+        actionChance[best_action] += (1.0 - epsilon) #Probability of a random action
+        return actionChance
     return policyFunction 
 
-def qLearning(env, num_episodes, discount_factor = 1.0, alpha = .6, epsilon = 0.05):
-    # state -> (action -> action-value)
+#Alpha is learning rate
+#Epsilon is chance for random actions
+def qLearning(env, num_epochs, discount_factor = 1.0, alpha = 2, epsilon = 0.2):
             
-    #loadQ = np.load('Brain3.npy',allow_pickle = True)
+    #load from file(pickle struggled with the weights)
     Q = defaultdict(lambda: np.zeros(env.action_space.n))
     f = open('Brain.txt','r')
     J = defaultdict()
@@ -45,25 +43,19 @@ def qLearning(env, num_episodes, discount_factor = 1.0, alpha = .6, epsilon = 0.
         while(p < 14):
             weights = np.append(weights,float(seperate[p]))
             p += 1
-
-        Q[tuple(key)] = weights
-        
+        #Our key is a tuple of our [x,y] position
+        #Each frame has a list of weights for each action
+        Q[tuple(key)] = weights    
     f.close()
-    
-    for p in list(Q.items()):
-        print(p,"\n")
+    #Brilliant File Management
 
-    # Keeps track of useful statistics 
-    stats = plotting.EpisodeStats( 
-            episode_lengths = np.zeros(num_episodes), 
-	    episode_rewards = np.zeros(num_episodes))
-    
-    # Create an epsilon greedy policy
+    # Create a greedy algorithm
     policy = greedyEpsilon(Q, epsilon, env.action_space.n)
 
-    # For every episode 
-    for epoch in range(num_episodes):
+    # Number of epochs
+    for epoch in range(num_epochs):
         print("Epoch:  ",epoch)
+
         # Reset the environment and pick the first action
         state = env.reset()
         frame = tuple([40,0])
@@ -72,54 +64,68 @@ def qLearning(env, num_episodes, discount_factor = 1.0, alpha = .6, epsilon = 0.
         prevAction = 0
 
         for t in itertools.count():
-            # get probabilities of all actions from current state
-            action_probabilities = policy(frame)
-            # choose action according to
-            # the probability distribution
-            action = np.random.choice(
-                    np.arange(len(action_probabilities)),
-                    p = action_probabilities)
+            # get probabilities of all actions for this frame
+            action_chance = policy(frame)
 
-            # take action and get reward, transit to next state
+            #generate random action
+            randAction = np.random.choice(
+                    np.arange(len(action_chance)),
+                    p = action_chance)
+            
+            #long-jump(second half below)
+            if(prevAction == 4):
+                action = 4
+            else:
+                action = randAction
+            
+            #take action
             next_state, reward, done, info = env.step(action)
             
+            #The position we are moving to
             nextFrame = tuple([info['x_pos'],info['y_pos']])
-            #print(nextFrame)
-            # Update statistics
-            stats.episode_rewards[epoch] += reward
-            stats.episode_lengths[epoch] = t
             
-            if(action == 4):
-                reward += .002
-            if(action == 3):
-                reward += .001
-
+            #Penalty for standing completely still
             if((prevFrame[0] == frame[0]) & (prevFrame[1] == frame[1])):
-               reward -= .01
-            # TD Update
+               reward -= .005
+            
+            #Temporal Difference Update(Reward Feedback)
             best_next_action = np.argmax(Q[nextFrame])
             td_target = reward + discount_factor * Q[nextFrame][best_next_action]
             td_delta = td_target - Q[frame][action]
             Q[frame][action] += alpha * td_delta
             
-            #if((prevFrame[0]+5 < (frame[0])) & (prevFrame[1] < frame[1]) & (reward > 0)):
-                #print("Frame: ",frame[0], " ",frame[1])
-                #print("Previous Frame: ",prevFrame[0], " ",prevFrame[1])
-                #Q[prevFrame][prevAction] += 2*(alpha*td_delta)
-                #Q[frame][action] += alpha * td_delta
+            #Increasing the reward for moving quickly(Two frames updated)
+            if((prevFrame[0]+5 < frame[0])  & (reward > 0)):
+                Q[prevFrame][prevAction] += 2*(alpha*td_delta)
+                Q[frame][action] += alpha * td_delta
             
-            #if((prevAction == action) & (reward > 1)):
-                #print("Reward: ",reward," Action: ", action)
-                #Q[frame][action] += alpha*td_delta
-            
-            # done is True if episode terminated
+            #Rewards consecutive actions that improve our x position
+            #This helps with jumping over tall pipes
+            if((prevAction == action) & (reward > 1)):
+                Q[frame][action] += .5 * alpha*td_delta
+                Q[prevFrame][prevAction] += .5 * alpha*td_delta
+
+            #done is True if epoch is terminated(out of lives)
             if done:
                 break
+
+            #Render Enviornment
             env.render()
+
+            #Update for next frame
             state = next_state
             prevFrame = frame
             frame = nextFrame
-            prevAction = action
+
+            #The second half of our long-jump(simulates holding down jump)
+            if((action ==  4) & (prevFrame[0] == frame[0])&(prevFrame[1] != frame[1])):
+                prevAction = 4
+            elif((action == 4) & (prevFrame[1] == frame[1])):
+                prevAction = randAction
+            else:
+                prevAction = action
+
+        #Save our model after each epoch
         f = open('Brain.txt','w')
         for i in Q:
             f.write(str(i))
@@ -128,10 +134,12 @@ def qLearning(env, num_episodes, discount_factor = 1.0, alpha = .6, epsilon = 0.
             f.write('\n')
         f.close()
 
-    return Q, stats
+    return Q
 
-Q, stats = qLearning(env, 20) 
+#Run program, second argument is number of epochs
+Q = qLearning(env, 1000) 
 
+#Final save once training is completed
 f = open('Brain.txt','w')
 for i in Q:
     f.write(str(i))
