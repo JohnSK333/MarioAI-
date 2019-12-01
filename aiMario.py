@@ -13,18 +13,20 @@ env = JoypadSpace(env, COMPLEX_MOVEMENT)
 
 #Standard Greedy Epsilon Policy
 def greedyEpsilon(Q, epsilon, num_actions):
-    def policyFunction(state):
+    def policyFunction(state,epoch,num_epochs):
+        epsilon = 0.2 - (0.2*(epoch/num_epochs))
         actionChance = np.ones(num_actions,dtype = float) * epsilon / num_actions
         best_action = np.argmax(Q[state])
         actionChance[best_action] += (1.0 - epsilon) #Probability of a random action
         return actionChance
     return policyFunction 
 
-#Alpha is learning rate
-#Epsilon is chance for random actions
-def qLearning(env, num_epochs, discount_factor = 1.0, alpha = 2, epsilon = 0.2):
-            
+def qLearning(env, num_epochs, discount_factor = 1.0):
+    #Epsilon is chance for random actions   
+    epsilon = 0.2
+    
     #load from file(pickle struggled with the weights)
+    #so now we have this
     Q = defaultdict(lambda: np.zeros(env.action_space.n))
     f = open('Brain.txt','r')
     J = defaultdict()
@@ -55,6 +57,9 @@ def qLearning(env, num_epochs, discount_factor = 1.0, alpha = 2, epsilon = 0.2):
     # Number of epochs
     for epoch in range(num_epochs):
         print("Epoch:  ",epoch)
+        
+        #Alpha is the learning rate(reduced over time)
+        alpha = .8 - (.8 * (epoch/num_epochs))
 
         # Reset the environment and pick the first action
         state = env.reset()
@@ -65,7 +70,7 @@ def qLearning(env, num_epochs, discount_factor = 1.0, alpha = 2, epsilon = 0.2):
 
         for t in itertools.count():
             # get probabilities of all actions for this frame
-            action_chance = policy(frame)
+            action_chance = policy(frame,epoch,num_epochs)
 
             #generate random action
             randAction = np.random.choice(
@@ -86,7 +91,7 @@ def qLearning(env, num_epochs, discount_factor = 1.0, alpha = 2, epsilon = 0.2):
             
             #Penalty for standing completely still
             if((prevFrame[0] == frame[0]) & (prevFrame[1] == frame[1])):
-               reward -= .005
+               reward -= .05
             
             #Temporal Difference Update(Reward Feedback)
             best_next_action = np.argmax(Q[nextFrame])
@@ -96,7 +101,7 @@ def qLearning(env, num_epochs, discount_factor = 1.0, alpha = 2, epsilon = 0.2):
             
             #Increasing the reward for moving quickly(Two frames updated)
             if((prevFrame[0]+5 < frame[0])  & (reward > 0)):
-                Q[prevFrame][prevAction] += 2*(alpha*td_delta)
+                Q[prevFrame][prevAction] += alpha*td_delta
                 Q[frame][action] += alpha * td_delta
             
             #Rewards consecutive actions that improve our x position
