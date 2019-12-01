@@ -43,19 +43,16 @@ def runModel():
     nextFrame = tuple([0,0])
     prevAction = 0
 
-    for t in itertools.count():
-        bestAction = np.argmax(Q[frame])
-        #long-jump(second half below)
-        if(prevAction == 4):
-            action = 4
-        else:
-            action = bestAction
+    with open('winSet.txt') as w:
+        actionList = ((w.read().split(',')))
+    actionList.pop(0)
 
+    for i in actionList:
         #take action
-        next_state, reward, done, info = env.step(action)
+        next_state, reward, done, info = env.step(int(i))
         
         nextFrame = tuple([info['x_pos'],info['y_pos']])
-
+        
         #We shouldn't die but just in case
         if done:
             break
@@ -68,12 +65,5 @@ def runModel():
         prevFrame = frame
         frame = nextFrame
 
-        #The second half of our long-jump(simulates holding down jump)
-        if((action ==  4) & (prevFrame[0] == frame[0])&(prevFrame[1] != frame[1])):
-            prevAction = 4
-        elif((action == 4) & (prevFrame[1] == frame[1])):
-            prevAction = bestAction
-        else:
-            prevAction = action
 
 runModel()
