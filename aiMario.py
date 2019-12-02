@@ -14,7 +14,7 @@ env = JoypadSpace(env, COMPLEX_MOVEMENT)
 #Standard Greedy Epsilon Policy
 def greedyEpsilon(Q, epsilon, num_actions):
     def policyFunction(state,epoch,num_epochs):
-        epsilon = 0.075 - (0.075*(epoch/num_epochs))
+        epsilon = 0.075 - (0.005*(epoch/num_epochs))
         actionChance = np.ones(num_actions,dtype = float) * epsilon / num_actions
         best_action = np.argmax(Q[state])
         actionChance[best_action] += (1.0 - epsilon) #Probability of a random action
@@ -23,7 +23,7 @@ def greedyEpsilon(Q, epsilon, num_actions):
 
 def qLearning(env, num_epochs, discount_factor = 1.0):
     #Epsilon is chance for random actions   
-    epsilon = 0.2
+    epsilon = 0.1
     
     #load from file(pickle struggled with the weights)
     #so now we have this
@@ -43,7 +43,7 @@ def qLearning(env, num_epochs, discount_factor = 1.0):
         key = [int(seperate[0]),int(seperate[1])]
         p = 2
         while(p < 14):
-            weights = np.append(weights,float(seperate[p]))
+            weights = np.append(weights,round(float(seperate[p]),4))
             p += 1
         #Our key is a tuple of our [x,y] position
         #Each frame has a list of weights for each action
@@ -64,7 +64,7 @@ def qLearning(env, num_epochs, discount_factor = 1.0):
         print("Epoch:  ",epoch)
         
         #Alpha is the learning rate(reduced over time)
-        alpha = .8 - (.8 * (epoch/num_epochs))
+        alpha = .3 - (.01 * (epoch/num_epochs))
 
         # Reset the environment and pick the first action
         state = env.reset()
@@ -72,33 +72,46 @@ def qLearning(env, num_epochs, discount_factor = 1.0):
         prevFrame = tuple([38,0])
         nextFrame = tuple([0,0])
         prevAction = 0
-        setRelease = False
+        forceAction = False
+        setThree = False
+        counter = 0
+        counter2 = 0
         actionList = [0]
         for t in itertools.count():
             # get probabilities of all actions for this frame
             action_chance = policy(frame,epoch,num_epochs)
 
             #generate random action
-            #He keeps going down the pipe and it is a four minute wait to learn not to
+            #Ignore a few actions for training speed
             while(True):
                 randAction = np.random.choice(
                         np.arange(len(action_chance)),
                         p = action_chance)
-                if(randAction != 10):
+                if((randAction != 10) & (randAction != 11) & (randAction != 9) & 
+                        (randAction != 8) & (randAction != 7) & (randAction != 0)):
                     break
 
             #button press/release(second half below)
-            if(setRelease & (prevAction == 4)):
-                action = 3  #Button Release
-            elif(prevAction == 4):
+            if(prevAction == 4):
                 action = 4  #Hold Button
             else:
                 action = randAction
+
+            if(setThree == True):
+                action = 3
+                counter2 = 0
+                setThree = False
+                #print(action)
+
+            if(forceAction == True):
+                action = 1
+                forceAction = False
             
             #take action
             next_state, reward, done, info = env.step(action)
             actionList.append(action)
-
+            
+            #Record moveset of best time
             if((info['flag_get']) & (bestTime < info['time'])):
                 bestTime = info['time']
                 f = open('winSet.txt','w')
@@ -106,17 +119,18 @@ def qLearning(env, num_epochs, discount_factor = 1.0):
                 for a in actionList:
                     f.write(str(a)+',')
                 f.close()
+            
             #The position we are moving to
-            x = info['x_pos']
-            y = info['y_pos']
-            #Elimate all odd pixels(reduce file size)
-            x = x - (x%2)
-            y = y - (y%2)
+            x = int(info['x_pos'])
+            y = int(info['y_pos'])
+            #Elimate  pixels(reduce file size)
+            x = x - (x%3)
+            y = y - (y%3)
 
             nextFrame = tuple([x,y])
             
             #Small penalty for making no progress
-            if((prevFrame[0] == frame[0]) & (action != 4)):
+            if(prevFrame[0] >= frame[0]):
                reward -= .1
             
             #Temporal Difference Update(Reward Feedback)
@@ -125,16 +139,18 @@ def qLearning(env, num_epochs, discount_factor = 1.0):
             td_delta = td_target - Q[frame][action]
             Q[frame][action] += alpha * td_delta
             
+            if(reward < 4):
+                Q[prevFrame][prevAction] += (alpha * td_delta)/2
             #Increasing the reward for moving quickly(Two frames updated)
-            if((prevFrame[0]+3 < frame[0])  & (reward > 0)):
+            if((prevFrame[0]+5 < frame[0])  & (reward > 0)):
                 Q[prevFrame][prevAction] += 0.1*(frame[0] - prevFrame[0]) * (alpha*td_delta)
                 Q[frame][action] += 0.1*(frame[0] - prevFrame[0]) * (alpha*td_delta)
             
             #Rewards consecutive actions that improve our x position
             #This helps with jumping over tall pipes
             if((prevAction == action) & (reward > 1)):
-                Q[frame][action] += .1 * alpha*td_delta
-                Q[prevFrame][prevAction] += .1 * alpha*td_delta
+                Q[frame][action] += .01 * alpha*td_delta
+                Q[prevFrame][prevAction] += .01 * alpha*td_delta
 
             #done is True if epoch is terminated(out of lives)
             if done:
@@ -143,23 +159,34 @@ def qLearning(env, num_epochs, discount_factor = 1.0):
             #Render Enviornment
             env.render()
 
+            #The second half of our button press/release
+            if(counter2 > 35):
+                setThree = True
+            if(action == 4):
+                counter2 += 1
+            if((action ==  4) & (prevFrame[0] == frame[0])&(prevFrame[1] != frame[1])):
+                Q[frame][action] += .2
+                prevAction = 4
+                counter2 = 0
+            elif((action == 4) & (prevFrame[0] < frame[0])):
+                prevAction = randAction #prevent looping action 4
+            else:
+                prevAction = action
+
+            if((frame[0] == prevFrame[0])&(frame[1] == prevFrame[1])):
+                counter += 1
+            else:
+                counter = 0
+
+            if((prevAction == 4) & (counter > 3)):
+                forceAction = True
+                counter = 0
+
             #Update for next frame
             state = next_state
             prevFrame = frame
             frame = nextFrame
 
-            #The second half of our button press/release
-            if((action ==  4) & (prevFrame[0] == frame[0])&(prevFrame[1] != frame[1])):
-                prevAction = 4 
-            elif((action == 4) & (prevFrame[1] == frame[1])):
-                prevAction = randAction
-            else:
-                prevAction = action
-
-            if((prevFrame[0] < frame[0])&(prevFrame[1] == frame[1])):
-                setRelease = True
-            else:
-                setRelease = False
         #Save our model every ten epochs
         sorted(Q.items(), key = lambda k_v: k_v[1][2], reverse = False)
         if((epoch%10) == 0):
@@ -167,14 +194,14 @@ def qLearning(env, num_epochs, discount_factor = 1.0):
             for i in Q:
                 f.write(str(i))
                 for j in Q[i]:
-                    f.write(','+str(j))
+                    f.write(','+str(round(j,5)))
                 f.write('\n')
             f.close()
 
     return Q
 
 #Run program, second argument is number of epochs
-Q = qLearning(env, 300) 
+Q = qLearning(env, 500) 
 
 #Final save once training is completed
 f = open('Brain.txt','w')
